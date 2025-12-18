@@ -120,14 +120,14 @@ export class GoogleCalendarRepository implements CalendarRepository {
   private buildPayload(input: CalendarEventInput | CalendarEventUpdate) {
     const payload: Record<string, unknown> = {};
 
-    if (input.title) payload.summary = input.title;
-    if (input.description) payload.description = input.description;
-    if (input.recurrence) payload.recurrence = input.recurrence;
+    if (input.title !== undefined) payload.summary = input.title;
+    if (input.description !== undefined) payload.description = input.description;
+    if (input.recurrence !== undefined) payload.recurrence = input.recurrence;
 
-    if (input.start) {
+    if (input.start !== undefined) {
       payload.start = this.serializeDate(input.start, input.timezone);
     }
-    if (input.end) {
+    if (input.end !== undefined) {
       payload.end = this.serializeDate(input.end, input.timezone);
     }
 

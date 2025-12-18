@@ -35,14 +35,21 @@ export class EmailService {
   }
 
   private buildRawMessage({ subject, body, to }: EmailContent): string {
+    // Sanitize subject to prevent MIME header injection (remove newlines)
+    const sanitizedSubject = subject.replace(/[\r\n]+/g, " ").trim();
+
     const headers = [
       `From: ${this.from}`,
       `To: ${to}`,
-      `Subject: ${subject}`,
+      `Subject: ${sanitizedSubject}`,
+      `Date: ${new Date().toUTCString()}`,
       "MIME-Version: 1.0",
       "Content-Type: text/plain; charset=UTF-8"
     ];
 
-    return `${headers.join("\r\n")}\r\n\r\n${body}`;
+    // Normalize body line endings to CRLF for MIME compliance
+    const normalizedBody = body.replace(/\r\n|\r|\n/g, "\r\n");
+
+    return `${headers.join("\r\n")}\r\n\r\n${normalizedBody}`;
   }
 }

@@ -2,7 +2,10 @@ import type { AppConfig } from "../config/env";
 import type { CalendarService } from "../services/calendar-service";
 import type { TaskExecutor } from "../services/task-executor";
 import type { TaskRunService } from "../services/task-run-service";
-import type { SummaryResult, SummaryService } from "../services/summary-service";
+import type {
+  SummaryResult,
+  SummaryService
+} from "../services/summary-service";
 
 export interface CronResult {
   checkedEvents: number;
@@ -42,25 +45,40 @@ export class CronController {
     let failedRuns = 0;
 
     for (const event of dueEvents) {
-      const run = await this.taskRunService.createRunIfMissing(event);
-      if (!run) continue;
-      createdRuns += 1;
-
-      await this.taskRunService.updateStatus(run.id, "running");
-
       try {
-        await this.taskExecutor.execute(event, run);
-        await this.taskRunService.updateStatus(run.id, "completed", {
-          summary: run.summary ?? event.title
-        });
+        const run = await this.taskRunService.createRunIfMissing(event);
+        if (!run) continue;
+        createdRuns += 1;
+
+        await this.taskRunService.updateStatus(run.id, "running");
+
+        let executionSucceeded = false;
+        try {
+          await this.taskExecutor.execute(event, run);
+          executionSucceeded = true;
+        } catch (error) {
+          failedRuns += 1;
+          const message =
+            error instanceof Error
+              ? error.message
+              : "Unknown execution failure";
+          await this.taskRunService.updateStatus(run.id, "failed", {
+            summary: run.summary ?? event.title,
+            error: message
+          });
+        }
+
+        if (executionSucceeded) {
+          await this.taskRunService.updateStatus(run.id, "completed", {
+            summary: run.summary ?? event.title
+          });
+        }
       } catch (error) {
-        failedRuns += 1;
-        const message =
-          error instanceof Error ? error.message : "Unknown execution failure";
-        await this.taskRunService.updateStatus(run.id, "failed", {
-          summary: run.summary ?? event.title,
-          error: message
-        });
+        // Log and continue processing remaining events
+        console.error(
+          `Failed to process event ${event.id}:`,
+          error instanceof Error ? error.message : error
+        );
       }
     }
 
@@ -71,7 +89,9 @@ export class CronController {
       summary = {
         sent: false,
         reason:
-          error instanceof Error ? error.message : "Failed to send summary email"
+          error instanceof Error
+            ? error.message
+            : "Failed to send summary email"
       };
     }
 

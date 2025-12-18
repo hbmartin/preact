@@ -139,7 +139,7 @@ export class Chat extends AIChatAgent<BindingsEnv, ChatState> {
 
     const description =
       input.when.type === "cron" && input.when.cron
-        ? `${input.description}\\nCron pattern: ${input.when.cron}`
+        ? `${input.description}\nCron pattern: ${input.when.cron}`
         : input.description;
 
     const event = await runtime.calendarService.createEvent({
@@ -172,7 +172,6 @@ export class Chat extends AIChatAgent<BindingsEnv, ChatState> {
    */
   async pollAgentCalendar() {
     const runtime = this.getRuntime();
-    await this.ensureCronSchedule();
     await runtime.cronController.handleTick(new Date());
   }
 
@@ -210,7 +209,7 @@ export class Chat extends AIChatAgent<BindingsEnv, ChatState> {
         });
 
         const result = streamText({
-          system: `You are a helpful assistant that can do various tasks... 
+          system: `You are a helpful assistant that can do various tasks...
 
 ${getSchedulePrompt({ date: new Date() })}
 
@@ -244,41 +243,41 @@ If the user asks to schedule a task, use the schedule tool to schedule the task.
         ? description
         : description.description ?? description.title;
 
-    await this.saveMessages([
-      ...this.messages,
-      {
-        id: generateId(),
-        role: "user",
-        parts: [
-          {
-            type: "text",
-            text: `Running scheduled task: ${text}`
-          }
-        ],
-        metadata: {
-          createdAt: new Date()
-        }
-      }
-    ]);
-
-    if (summary) {
-      await this.saveMessages([
-        ...this.messages,
+    const userMessage = {
+      id: generateId(),
+      role: "user" as const,
+      parts: [
         {
-          id: generateId(),
-          role: "assistant",
-          parts: [
-            {
-              type: "text",
-              text: `Task context: ${summary}`
-            }
-          ],
-          metadata: {
-            createdAt: new Date()
-          }
+          type: "text" as const,
+          text: `Running scheduled task: ${text}`
         }
-      ]);
-    }
+      ],
+      metadata: {
+        createdAt: new Date()
+      }
+    };
+
+    const messagesToSave = summary
+      ? [
+          ...this.messages,
+          userMessage,
+          {
+            id: generateId(),
+            role: "assistant" as const,
+            parts: [
+              {
+                type: "text" as const,
+                text: `Task context: ${summary}`
+              }
+            ],
+            metadata: {
+              createdAt: new Date()
+            }
+          }
+        ]
+      : [...this.messages, userMessage];
+
+    await this.saveMessages(messagesToSave);
   }
 
   async executeTask(description: string) {

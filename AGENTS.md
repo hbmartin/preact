@@ -35,4 +35,3 @@ Use a clean, layered structure: Separates concerns into controllers → services
 - Mirror src/ in tests/.
 - Unit test services/repositories.
 - Integration test routes/controllers.
-- Use Jest + supertest.
