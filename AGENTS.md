@@ -3,6 +3,7 @@
 - Write unit tests for features (using vitest)
 - Commit often.
 - Always use zod v3 to validate
+- use `pnpm check` after changes to ensure type safety and linting
 
 Use a clean, layered structure: Separates concerns into controllers → services → repositories/data access.
 

@@ -12,20 +12,16 @@ import {
   type ToolSet
 } from "ai";
 import { openai } from "@ai-sdk/openai";
-import { CronController } from "./controllers/cron-controller";
-import { getAppConfig, type AppConfig } from "./config/env";
 import type { CalendarEvent } from "./domain/calendar";
-import { CalendarService } from "./services/calendar-service";
-import { EmailService } from "./services/email-service";
-import { HandlerTaskExecutor, type TaskExecutor } from "./services/task-executor";
-import { TaskRunService } from "./services/task-run-service";
-import { SummaryService } from "./services/summary-service";
+import { HandlerTaskExecutor } from "./services/task-executor";
 import { cleanupMessages, processToolCalls } from "./utils";
 import { tools, executions } from "./tools";
 import type { BindingsEnv } from "./types/env";
-import { GoogleCalendarRepository } from "./repositories/calendar-repository";
-import { SqlTaskRunRepository } from "./repositories/task-run-repository";
-import { SqlSummaryRepository } from "./repositories/summary-repository";
+import {
+  createRuntimeContainer,
+  type RuntimeContainer
+} from "./config/container";
+import type { CronResult } from "./controllers/cron-controller";
 
 // import { env } from "cloudflare:workers";
 
@@ -39,23 +35,13 @@ const model = openai("gpt-4o-2024-11-20");
 /**
  * Chat Agent implementation that handles real-time AI chat interactions
  */
-type ChatState = {
-  pollerScheduled: boolean;
-};
-
-type RuntimeContext = {
-  config: AppConfig;
-  cronController: CronController;
-  taskExecutor: TaskExecutor;
-  calendarService: CalendarService;
-  taskRunService: TaskRunService;
-};
+type ChatState = Record<string, never>;
 
 export class Chat extends AIChatAgent<BindingsEnv, ChatState> {
-  initialState: ChatState = { pollerScheduled: false };
+  initialState: ChatState = {};
 
   private readonly runtimeEnv: BindingsEnv;
-  private runtime?: RuntimeContext;
+  private runtime?: RuntimeContainer;
 
   constructor(ctx: AgentContext, env: BindingsEnv) {
     super(ctx, env);
@@ -65,50 +51,19 @@ export class Chat extends AIChatAgent<BindingsEnv, ChatState> {
   /**
    * Lazily construct runtime dependencies for the agent.
    */
-  private getRuntime(): RuntimeContext {
+  private getRuntime(): RuntimeContainer {
     if (this.runtime) return this.runtime;
-
-    const config = getAppConfig(this.runtimeEnv);
-    const calendarRepository = new GoogleCalendarRepository({
-      calendarId: config.calendarId,
-      accessToken: config.accessToken,
-      timezone: config.timezone
-    });
-    const taskRunRepository = new SqlTaskRunRepository(this.sql.bind(this));
-    const summaryRepository = new SqlSummaryRepository(this.sql.bind(this));
-
-    const calendarService = new CalendarService(calendarRepository);
-    const taskRunService = new TaskRunService(taskRunRepository);
-    const emailService = new EmailService(
-      this.runtimeEnv.SEND_EMAIL,
-      config.emailSender
-    );
-    const summaryService = new SummaryService(
-      taskRunService,
-      summaryRepository,
-      emailService,
-      config
-    );
 
     const taskExecutor = new HandlerTaskExecutor(async (event, run) => {
       await this.executeCalendarTask(event, run.summary);
     });
 
-    const cronController = new CronController(
-      calendarService,
-      taskRunService,
-      taskExecutor,
-      summaryService,
-      config
-    );
+    this.runtime = createRuntimeContainer({
+      env: this.runtimeEnv,
+      sql: this.sql.bind(this),
+      taskExecutor
+    });
 
-    this.runtime = {
-      config,
-      cronController,
-      taskExecutor,
-      calendarService,
-      taskRunService
-    };
     return this.runtime;
   }
 
@@ -154,25 +109,13 @@ export class Chat extends AIChatAgent<BindingsEnv, ChatState> {
     return event;
   }
 
-  private async ensureCronSchedule() {
-    if (this.state?.pollerScheduled) return;
-    const existingCron = this.getSchedules({ type: "cron" }).find(
-      (schedule) => schedule.callback === "pollAgentCalendar"
-    );
-
-    if (!existingCron) {
-      await this.schedule("*/15 * * * *", "pollAgentCalendar");
-    }
-
-    this.setState({ pollerScheduled: true });
-  }
-
   /**
-   * Cron callback invoked by the agent scheduler.
+   * Handles cron tick triggered by the scheduled handler.
+   * This method is called via the /cron endpoint.
    */
-  async pollAgentCalendar() {
+  async handleCron(): Promise<CronResult> {
     const runtime = this.getRuntime();
-    await runtime.cronController.handleTick(new Date());
+    return runtime.cronController.handleTick(new Date());
   }
 
   /**
@@ -182,8 +125,6 @@ export class Chat extends AIChatAgent<BindingsEnv, ChatState> {
     onFinish: StreamTextOnFinishCallback<ToolSet>,
     _options?: { abortSignal?: AbortSignal }
   ) {
-    await this.ensureCronSchedule();
-
     // const mcpConnection = await this.mcp.connect(
     //   "https://path-to-mcp-server/sse"
     // );
@@ -286,6 +227,15 @@ If the user asks to schedule a task, use the schedule tool to schedule the task.
 }
 
 /**
+ * Triggers the cron handler on the default Chat Durable Object instance.
+ */
+async function triggerCronHandler(env: BindingsEnv): Promise<CronResult> {
+  const id = env.Chat.idFromName("default");
+  const stub = env.Chat.get(id) as unknown as Chat;
+  return stub.handleCron();
+}
+
+/**
  * Worker entry point that routes incoming requests to the appropriate handler
  */
 export default {
@@ -298,6 +248,12 @@ export default {
         success: hasOpenAIKey
       });
     }
+
+    if (url.pathname === "/cron" && request.method === "POST") {
+      const result = await triggerCronHandler(env);
+      return Response.json(result);
+    }
+
     if (!process.env.OPENAI_API_KEY) {
       console.error(
         "OPENAI_API_KEY is not set, don't forget to set it locally in .dev.vars, and use `wrangler secret bulk .dev.vars` to upload it to production"
@@ -308,5 +264,17 @@ export default {
       (await routeAgentRequest(request, env)) ||
       new Response("Not found", { status: 404 })
     );
+  },
+
+  /**
+   * Scheduled handler for Cloudflare Workers cron triggers.
+   * Invokes the cron controller on the default Chat agent instance.
+   */
+  async scheduled(
+    _event: ScheduledEvent,
+    env: BindingsEnv,
+    ctx: ExecutionContext
+  ) {
+    ctx.waitUntil(triggerCronHandler(env));
   }
 } satisfies ExportedHandler<BindingsEnv>;

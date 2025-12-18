@@ -41,46 +41,51 @@ export class CronController {
       (event) => event.start.getTime() <= now.getTime()
     );
 
-    let createdRuns = 0;
-    let failedRuns = 0;
-
-    for (const event of dueEvents) {
-      try {
-        const run = await this.taskRunService.createRunIfMissing(event);
-        if (!run) continue;
-        createdRuns += 1;
-
-        await this.taskRunService.updateStatus(run.id, "running");
-
-        let executionSucceeded = false;
+    const results = await Promise.all(
+      dueEvents.map(async (event) => {
+        let runCreated = false;
         try {
-          await this.taskExecutor.execute(event, run);
-          executionSucceeded = true;
-        } catch (error) {
-          failedRuns += 1;
-          const message =
-            error instanceof Error
-              ? error.message
-              : "Unknown execution failure";
-          await this.taskRunService.updateStatus(run.id, "failed", {
-            summary: run.summary ?? event.title,
-            error: message
-          });
-        }
+          const run = await this.taskRunService.createRunIfMissing(event);
+          if (!run) return { created: false, failed: false };
+          runCreated = true;
 
-        if (executionSucceeded) {
-          await this.taskRunService.updateStatus(run.id, "completed", {
-            summary: run.summary ?? event.title
-          });
+          await this.taskRunService.updateStatus(run.id, "running");
+
+          let executionSucceeded = false;
+          try {
+            await this.taskExecutor.execute(event, run);
+            executionSucceeded = true;
+          } catch (error) {
+            const message =
+              error instanceof Error
+                ? error.message
+                : "Unknown execution failure";
+            await this.taskRunService.updateStatus(run.id, "failed", {
+              summary: run.summary ?? event.title,
+              error: message
+            });
+            return { created: true, failed: true };
+          }
+
+          if (executionSucceeded) {
+            await this.taskRunService.updateStatus(run.id, "completed", {
+              summary: run.summary ?? event.title
+            });
+          }
+          return { created: true, failed: false };
+        } catch (error) {
+          // Log and continue processing remaining events
+          console.error(
+            `Failed to process event ${event.id}:`,
+            error instanceof Error ? error.message : error
+          );
+          return { created: runCreated, failed: false };
         }
-      } catch (error) {
-        // Log and continue processing remaining events
-        console.error(
-          `Failed to process event ${event.id}:`,
-          error instanceof Error ? error.message : error
-        );
-      }
-    }
+      })
+    );
+
+    const createdRuns = results.filter((r) => r.created).length;
+    const failedRuns = results.filter((r) => r.failed).length;
 
     let summary: SummaryResult | undefined;
     try {
