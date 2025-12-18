@@ -1,23 +1,14 @@
-import { defineWorkersConfig } from "@cloudflare/vitest-pool-workers/config";
+import { defineConfig } from "vitest/config";
 
-export default defineWorkersConfig({
-  environments: {
-    ssr: {
-      keepProcessEnv: true
-    }
-  },
+export default defineConfig({
   test: {
-    // https://github.com/cloudflare/workers-sdk/issues/9822
+    environment: "node",
+    setupFiles: "./tests/setup.ts",
     deps: {
       optimizer: {
         ssr: {
           include: ["ajv"]
         }
-      }
-    },
-    poolOptions: {
-      workers: {
-        wrangler: { configPath: "./wrangler.jsonc" }
       }
     }
   }
