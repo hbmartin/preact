@@ -131,7 +131,53 @@ export class SummaryService {
     const month = Number(parts.month) - 1;
     const day = Number(parts.day);
 
-    return new Date(Date.UTC(year, month, day, 0, 0, 0));
+    // Local midnight expressed as if it were UTC (not the actual UTC instant we want)
+    const localMidnightAsUtc = Date.UTC(year, month, day, 0, 0, 0);
+
+    // Calculate timezone offset at an estimated midnight time
+    // offset = localTime - utcTime, so utcTime = localTime - offset
+    const estimatedUtcMidnight = localMidnightAsUtc - this.getTimezoneOffsetMs(new Date(localMidnightAsUtc));
+
+    // Refine: get the actual offset at the estimated UTC midnight
+    // This handles DST edge cases where the offset at localMidnightAsUtc differs from the offset at actual midnight
+    const actualOffset = this.getTimezoneOffsetMs(new Date(estimatedUtcMidnight));
+    const utcMidnight = localMidnightAsUtc - actualOffset;
+
+    return new Date(utcMidnight);
+  }
+
+  private getTimezoneOffsetMs(date: Date): number {
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: this.timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
+    });
+
+    const parts = formatter.formatToParts(date).reduce<Record<string, string>>(
+      (acc, part) => {
+        if (part.type !== "literal") acc[part.type] = part.value;
+        return acc;
+      },
+      {}
+    );
+
+    // Construct local time as if it were UTC
+    const localAsUtc = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour),
+      Number(parts.minute),
+      Number(parts.second)
+    );
+
+    // offset = localTime - utcTime
+    return localAsUtc - date.getTime();
   }
 
   private getLocalHour(date: Date): number {

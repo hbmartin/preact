@@ -3,6 +3,7 @@
 - Write unit tests for features (using vitest)
 - Commit often.
 - Always use zod v3 to validate
+- use `pnpm check` after changes to ensure type safety and linting
 
 Use a clean, layered structure: Separates concerns into controllers → services → repositories/data access.
 
@@ -35,4 +36,3 @@ Use a clean, layered structure: Separates concerns into controllers → services
 - Mirror src/ in tests/.
 - Unit test services/repositories.
 - Integration test routes/controllers.
-- Use Jest + supertest.

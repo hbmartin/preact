@@ -22,7 +22,7 @@ vi.mock("cloudflare:email", () => {
   return { EmailMessage };
 });
 
-describe.skip("Chat worker", () => {
+describe("Chat worker", () => {
   it("responds with Not found", async () => {
     const { default: worker } = await import("../src/server");
     const { routeAgentRequest } = await import("agents");
